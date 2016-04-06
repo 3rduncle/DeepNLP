@@ -80,4 +80,3 @@ if __name__ == "__main__":
 		pred = SelectMaximumProbability(model.predict({'input': x_val})['output'])
 		acc = accuracy(y_val, pred)
 		print('Test accuracy:', acc)
-		print('Pred', pred[0:10])
