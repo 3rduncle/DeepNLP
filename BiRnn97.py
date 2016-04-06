@@ -28,8 +28,6 @@ def PreprocessData(sentences, ct):
 			x_data.append([ct.encode(uchar) for uchar in window])
 		for label in labels:
 			y_data.append(LabelEmbedding(label))
-	x_data = x_data[0:10]
-	y_data = y_data[0:10]
 	size = len(x_data)
 	x_feature = len(x_data[0][0])
 	y_feature = len(y_data[0])
