@@ -1,7 +1,8 @@
 #coding:utf8
 from __future__ import print_function
+import sys
 import numpy as np
-np.random.seed(1337)
+#np.random.seed(1337)
 
 from keras.preprocessing import sequence
 from keras.utils.np_utils import accuracy
@@ -10,13 +11,17 @@ from keras.layers.recurrent import LSTM, SimpleRNN
 from keras.models import Sequential, Graph
 from CharacterEncoder import CharacterFontTable
 from WordSegmentsUtility import GenerateLabel, LabelEmbedding, WordWindow
-from Utility import SelectMaximumProbability 
+from Utility import SelectMaximumProbability, StreamDataGenerator
 
 MAX_FEATURES = 64
 HIDDEN_SIZE = 128
 BATCH_SIZE = 2000
+STREAM_BATCH_SIZE = 1000
 MAX_LEN = 5
 STEP = 1
+XMAX_TIMESTAMP = MAX_LEN
+X_FEATURES = 64
+Y_FEATURES = 4
 
 # B,M,E,S
 def PreprocessData(sentences, ct):
@@ -46,23 +51,24 @@ if __name__ == "__main__":
 	print('Process Data ... ')
 	ct = CharacterFontTable('character.vector')
 	path = '../icwb2-data/training/pku_training.utf8'
-	sentences = [line.rstrip('\n') for line in open(path)]
-	np.random.shuffle(sentences)
-	split_at = len(sentences) - len(sentences) / 10
-	sen_train = sentences[:split_at]
-	sen_val = sentences[split_at:]
-	x_train, y_train = PreprocessData(sen_train, ct)
-	x_val, y_val = PreprocessData(sen_val, ct)
+	#sentences = [line.rstrip('\n') for line in open(path)]
+	#np.random.shuffle(sentences)
+	#split_at = len(sentences) - len(sentences) / 10
+	#sen_train = sentences[:split_at]
+	#sen_val = sentences[split_at:]
+	#x_train, y_train = PreprocessData(sen_train, ct)
+	#x_val, y_val = PreprocessData(sen_val, ct)
+
+	streamData = StreamDataGenerator(path, STREAM_BATCH_SIZE, 0.1)
+	streamData.processor(lambda x: PreprocessData(x, ct))
 
 	print('Build Model ... ')
-	_, xmax_timestamp, x_feature = x_train.shape
-	_, y_feature = y_train.shape
 	model = Graph()
-	model.add_input(name='input', input_shape=(xmax_timestamp, x_feature))
+	model.add_input(name='input', input_shape=(XMAX_TIMESTAMP, X_FEATURES))
 	model.add_node(LSTM(HIDDEN_SIZE), name='forward', input='input')
 	model.add_node(LSTM(HIDDEN_SIZE, go_backwards=True), name='backward', input='input')
 	model.add_node(Dropout(0.2), name='dropout', inputs=['forward', 'backward'])
-	model.add_node(Dense(y_feature, activation='sigmoid'), name='sigmoid', input='dropout')
+	model.add_node(Dense(Y_FEATURES, activation='sigmoid'), name='sigmoid', input='dropout')
 	model.add_node(Activation('softmax'), name='softmax', input='sigmoid')
 	model.add_output(name='output', input='softmax')
 	model.compile('adam', {'output': 'categorical_crossentropy'})
@@ -72,11 +78,15 @@ if __name__ == "__main__":
 		print()
 		print('-' * 50)
 		print('Iteration', iteration)
-		model.fit({'input': x_train, 'output': y_train}, 
-			batch_size=BATCH_SIZE, 
-			nb_epoch=1, 
-			show_accuracy=True
-		)
-		pred = SelectMaximumProbability(model.predict({'input': x_val})['output'])
-		acc = accuracy(y_val, pred)
-		print('Test accuracy:', acc)
+		streamData.reset()
+		for data in streamData.generate():
+			x_train, y_train = data['train']
+			x_val, y_val = data['val']
+			model.fit({'input': x_train, 'output': y_train}, 
+				batch_size=BATCH_SIZE, 
+				nb_epoch=1, 
+				show_accuracy=True
+			)
+			pred = SelectMaximumProbability(model.predict({'input': x_val})['output'])
+			acc = accuracy(y_val, pred)
+			print('Test accuracy:', acc)
