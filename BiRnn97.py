@@ -50,7 +50,7 @@ def PreprocessData(sentences, ct):
 if __name__ == "__main__":
 	print('Process Data ... ')
 	ct = CharacterFontTable('character.vector')
-	path = '../icwb2-data/training/pku_training.utf8'
+	path = './icwb2-data/training/pku_training.utf8'
 	#sentences = [line.rstrip('\n') for line in open(path)]
 	#np.random.shuffle(sentences)
 	#split_at = len(sentences) - len(sentences) / 10
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 	model.add_node(Dense(Y_FEATURES, activation='sigmoid'), name='sigmoid', input='dropout')
 	model.add_node(Activation('softmax'), name='softmax', input='sigmoid')
 	model.add_output(name='output', input='softmax')
-	model.compile('adam', {'output': 'categorical_crossentropy'})
+	model.compile('adam', {'output': 'categorical_crossentropy'}, metrics=["accuracy"])
 
 	from six.moves import range
 	for iteration in range(1, 200):
@@ -82,11 +82,17 @@ if __name__ == "__main__":
 		for data in streamData.generate():
 			x_train, y_train = data['train']
 			x_val, y_val = data['val']
-			model.fit({'input': x_train, 'output': y_train}, 
+			h = model.fit({'input': x_train, 'output': y_train}, 
 				batch_size=BATCH_SIZE, 
 				nb_epoch=1, 
-				show_accuracy=True
+				#show_accuracy=True
 			)
-			pred = SelectMaximumProbability(model.predict({'input': x_val})['output'])
-			acc = accuracy(y_val, pred)
-			print('Test accuracy:', acc)
+			train_loss = sum(h.history['loss']) / len(h.history['loss'])
+			train_acc = sum(h.history['acc']) / len(h.history['acc'])
+			print('Training - loss: %f - acc: %f' % (train_loss, train_acc))
+			e = model.evaluate(
+					{'input': x_val, 'output': y_val},
+					batch_size=len(x_val),
+					#show_accuracy=True
+				)
+			print('Validation - loss: %f - acc: %f' % tuple(e))
