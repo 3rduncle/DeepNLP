@@ -1,6 +1,6 @@
 #coding:utf8
 from __future__ import print_function
-def GenerateLabel(segments):
+def generate_label(segments):
 	segments = segments.rstrip('\n')
 	words = [word.decode('utf8') for word in segments.split()]
 	label = ''
@@ -14,7 +14,16 @@ def GenerateLabel(segments):
 			label += ''.join(y)
 	return ''.join(words), label
 
-def LabelEmbedding(label):
+def segment2sentence(segments):
+    usentences = []
+    labels = []
+    for seg in segments:
+        usentence, label = generate_label(seg)
+        usentences.append(usentence)
+        labels.append(label)
+    return usentences, labels
+
+def label_embedding(label):
 	if label == 'B':
 		return [1, 0, 0, 0]
 	elif label == 'M':
@@ -24,7 +33,7 @@ def LabelEmbedding(label):
 	else:
 		return [0, 0, 0, 1]
 
-def WordWindow(line, window = (2, 2)):
+def word_window(line, window = (2, 2)):
 	prefix = window[0]
 	suffix = window[1]
 	size = len(line)
