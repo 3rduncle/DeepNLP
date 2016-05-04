@@ -80,7 +80,7 @@ def selectMaximumProbability(mat):
 	response[indices] = 1.0
 	return response
 
-def build_vocab(sentences, padding=False):
+def build_vocab(sentences, start_with=[]):
     '''
     Builds a vocabulary mapping from word to index based on the sentences.
     Returns vocabulary mapping and inverse vocabulary mapping.
@@ -88,13 +88,11 @@ def build_vocab(sentences, padding=False):
     # Build vocabulary
     word_counts = Counter(itertools.chain(*sentences))
     # Mapping from index to word
-    vocabulary = [x[0] for x in word_counts.most_common()]
+    reversed_vocabulary = start_with + [x[0] for x in word_counts.most_common()]
     # Mapping from word to index
-    if padding:
-        word2index = {x: i + 1 for i, x in enumerate(vocabulary)}
-    else:
-        word2index = {x: i for i, x in enumerate(vocabulary)}
-    return [vocabulary, word2index]
+    start = len(start_with)
+    vocabulary = {x: i for i, x in enumerate(reversed_vocabulary)}
+    return [reversed_vocabulary, vocabulary]
 
 def load_bin_vec(fname, vocab):
     """
@@ -155,9 +153,9 @@ def embedding_layer_word2vec(weights, word_idx_map):
     return response
 
 if __name__ == '__main__':
-    client = pymongo.MongoClient()
-    coll = client['word2vec']['en_google']
-    vocab, w2i = buildVocab([['hello', 'world'],['hello', 'python']])
-    print(vocab, w2i)
-    word2vec = load_word2vec(coll, vocab)
-    print(word2vec)
+    #client = pymongo.MongoClient()
+    #coll = client['word2vec']['en_google']
+    reversed_vocab, vocab = build_vocab([['hello', 'world'],['hello', 'python']], start_with=['<PAD>'])
+    print(reversed_vocab, vocab)
+    #word2vec = load_word2vec(coll, vocab)
+    #print(word2vec)
