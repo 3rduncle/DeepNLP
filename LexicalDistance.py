@@ -4,26 +4,43 @@ np.random.seed(1337)
 
 from keras.preprocessing import sequence
 from keras.models import Graph, Model
+from keras.constraints import maxnorm
 from keras.layers import Input, merge
 from keras.layers.core import Dense, Dropout, Activation, Lambda, Merge
 from keras.layers.convolutional import Convolution1D
 from keras.layers.embeddings import Embedding
+from keras.optimizers import Adam
 from keras import backend as K
 from theano import tensor as T
 from qa_utils import extract_sentences, generate_neg
 from utility import build_vocab
+import theano
+import keras
+from theano.compile.nanguardmode import NanGuardMode
+theano.config.exception_verbosity='high'
+
+class DebugCallback(keras.callbacks.Callback):
+	def on_batch_begin(self, batch, logs={}):
+		print debug1(xq_np[0:BATCH_SIZE], xa_np[0:BATCH_SIZE]).max()
+		print debug2(xq_np[0:BATCH_SIZE], xa_np[0:BATCH_SIZE]).max()
+		for param in model.get_weights():
+			print np.any(np.isnan(param))	
 
 WORD_EMBEDDING_DIM = 300 # 词向量维数
-QMAX_TIMESTAMP = 33 # Q的序列长度
-AMAX_TIMESTAMP = 100 # A的序列长度
+QMAX_TIMESTAMP = 56 # Q的序列长度
+AMAX_TIMESTAMP = 1034 # A的序列长度
 LOCAL_WINDOW = 3
 NB_FILTER = 500 # 卷积核个数
 FILTER_LENGTH = 3 # 一维卷积核窗口宽度
 BATCH_SIZE = 50 # 批处理数据量
+SAFE_EPSILON = 1e-20
 EPOCHS = 1000
 
-pos_q = [line.split() for line in extract_sentences('./data/qg/train.question')]
-pos_a = [line.split() for line in extract_sentences('./data/qg/train.answer')]
+#pos_q = [line.split() for line in extract_sentences('./data/qg/train.question')]
+#pos_a = [line.split() for line in extract_sentences('./data/qg/train.answer')]
+pos_q = [line.split() for line in open('/Users/ganlu/Development/PyPath/DeepNLP/data/insurance_qa_python/train.question')]
+pos_a = [line.split() for line in open('/Users/ganlu/Development/PyPath/DeepNLP/data/insurance_qa_python/train.answer')]
+
 reversed_vocab, vocab = build_vocab(pos_q + pos_a, start_with=['<PAD>'])
 print len(vocab)
 pos_q = [map(lambda x: vocab[x], terms) for terms in pos_q]
@@ -38,14 +55,15 @@ xa_data = pos_a + neg_a
 xq_np = sequence.pad_sequences(xq_data, maxlen = qmax_timestamp)
 xa_np = sequence.pad_sequences(xa_data, maxlen = amax_timestamp)
 print xq_np.shape, xa_np.shape
-y_np = np.array([1] * len(pos_q) + [0] * len(pos_q), dtype='int')
+y_np = np.array([1] * len(pos_q) + [0] * len(neg_q), dtype='int').reshape((len(pos_q) + len(neg_q),1))
 
 idx = np.arange(xq_np.shape[0])
 np.random.shuffle(idx)
 xq_np = xq_np[idx]
-xa_np = xa_np[idx,0:100]
-y_np = xq_np[idx]
-print xq_np.shape, xa_np.shape
+xa_np = xa_np[idx]
+y_np = y_np[idx]
+print xq_np.shape, xa_np.shape, y_np.shape
+print 'Check Input', np.any(np.isnan(xq_np)), np.any(np.isnan(xa_np)), np.any(np.isnan(y_np))
 
 # 注意自定义的merge_mode接收到的tensor带有额外的batch_size，
 # 即这一层接收到的tensor的ndim=(batch_size, row, col)
@@ -55,20 +73,20 @@ def semantic_matrix(argv):
 	assert len(argv) == 2
 	q = argv[0]
 	a = argv[1]
-	inner_product = K.batch_dot(q, K.permute_dimensions(a, [0,2,1]))
-	q_l2 = K.l2_normalize(q, axis=2)#.reshape((q.shape[0], q.shape[1], 1))
-	a_l2 = K.l2_normalize(a, axis=2)#.reshape((a.shape[0], a.shape[1], 1))
-	response = inner_product / K.batch_dot(q_l2, K.permute_dimensions(a_l2, [0,2,1]))
-	return response
+	q_sqrt = K.sqrt((q ** 2).sum(axis=2, keepdims=True))
+	a_sqrt = K.sqrt((a ** 2).sum(axis=2, keepdims=True))
+	denominator = K.batch_dot(q_sqrt, K.permute_dimensions(a_sqrt, [0,2,1]))
+	return K.batch_dot(q, K.permute_dimensions(a, [0,2,1])) / (denominator + SAFE_EPSILON)
 
 # 注意idx是二维的矩阵
 # 如何执行类似batch index的效果折腾了半天
 # 参考https://groups.google.com/forum/#!topic/theano-users/7gUdN6E00Dc
+# 注意argmax里面是2 - axis
 def match_matrix(argv, axis=0, w=3):
 	assert len(argv) == 2
 	o = argv[0]
 	s = argv[1]
-	idx = T.argmax(s, axis=1+axis)
+	idx = T.argmax(s, axis=2-axis)
 	i0 = T.repeat(T.arange(idx.shape[0]), idx.shape[1]).flatten()
 	i1 = idx.flatten()
 	indexed = o[i0, i1, :]
@@ -77,15 +95,15 @@ def match_matrix(argv, axis=0, w=3):
 def parallel(source, target):
 	einner_product = (source * target).sum(axis=2).reshape((source.shape[0],source.shape[1], 1))
 	enorm = (target ** 2).sum(axis=2).reshape((source.shape[0],source.shape[1],1))
-	response = target * (einner_product / enorm)
+	response = target * einner_product / (enorm + SAFE_EPSILON)
 	return response
 
-def compute_similar(source, target):
-	s_l2 = K.l2_normalize(source, axis=1).reshape((source.shape[0], 1))
-	t_l2 = K.l2_normalize(source, axis=1).reshape((source.shape[0], 1))
-	reshaped_source = source.reshape((source.shape[0], source.shape[1], 1))
-	reshaped_target = source.reshape((target.shape[0], target.shape[1], 1))
-	return K.batch_dot(reshaped_source, K.permute_dimensions(reshaped_target, [0,2,1])) / (s_l2 * t_l2)
+def compute_similar(q, a):
+	q_sqrt = K.sqrt((q ** 2).sum(axis=1))
+	a_sqrt = K.sqrt((a ** 2).sum(axis=1))
+	denominator = q_sqrt * a_sqrt
+	output = (q * a).sum(axis=1) / (denominator + SAFE_EPSILON)
+	return K.expand_dims(output, 1)
 
 #model = Graph()
 
@@ -95,9 +113,9 @@ q_input = Input(name='q_input', shape=(QMAX_TIMESTAMP,), dtype='int32')
 a_input = Input(name='a_input', shape=(AMAX_TIMESTAMP,), dtype='int32')
 
 embedding = Embedding(
-	len(vocab) + 1, 
+	len(vocab), 
 	WORD_EMBEDDING_DIM, 
-	#input_length=QMAX_TIMESTAMP
+	#input_length=QMAX_TIMESTAMP,
 )
 
 q_embedding = embedding(q_input)
@@ -120,7 +138,7 @@ print('Semantic shape ', cross.get_output_shape_at(0))
 # compute cross 
 q_match = merge(
 	[a_embedding, semantic],
-	mode=lambda x: match_matrix(x,axis=1),
+	mode=lambda x: match_matrix(x,axis=0),
 	output_shape=(QMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
 	name='q_match'
 )
@@ -128,7 +146,7 @@ print('q_match ', q_match._keras_shape, K.ndim(q_match))
 
 a_match = merge(
 	[q_embedding, semantic],
-	mode=lambda x: match_matrix(x,axis=0),
+	mode=lambda x: match_matrix(x,axis=1),
 	output_shape=(AMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
 	name='a_match'
 )
@@ -149,11 +167,11 @@ q_pos = Merge(
 
 # 注意这里不能直接用1 - q_pos获取，否则会丢掉_keras_shape属性
 # 注意这里的output_shape是不需要给batch_size的和Merge不同
-q_neg = Lambda(
-	lambda x: 1 - x,
-	output_shape=(QMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
+q_neg = Merge(
+	mode=lambda x: x[0] - x[1],
+	output_shape=(BATCH_SIZE, QMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
 	name='q-'
-)(q_pos)
+)([q_embedding, q_pos])
 print('q_pos', q_pos._keras_shape, K.ndim(q_pos))
 print('q_neg', q_neg._keras_shape, K.ndim(q_neg))
 
@@ -162,11 +180,11 @@ a_pos = Merge(
 	output_shape=(BATCH_SIZE, AMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
 	name='a+',
 )([a_embedding, a_match])
-a_neg = Lambda(
-	lambda x: 1 - x,
-	output_shape=(AMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
+a_neg = Merge(
+	mode=lambda x: x[0] - x[1],
+	output_shape=(BATCH_SIZE, AMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
 	name='a-'
-)(a_pos)
+)([a_embedding, a_pos])
 print('a_pos', a_pos._keras_shape, K.ndim(a_pos))
 print('a_neg', a_neg._keras_shape, K.ndim(a_neg))
 
@@ -177,13 +195,17 @@ q_conv = Convolution1D(
 	border_mode='valid',
 	#activation='relu',
 	subsample_length=1,
-	input_shape=(QMAX_TIMESTAMP, WORD_EMBEDDING_DIM)
+	W_constraint=maxnorm(3),
+	b_constraint=maxnorm(3),
+	input_shape=(QMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
+	name='q_conv'
 )
 
 q_conv_neg = q_conv(q_neg)
 q_conv_pos = q_conv(q_pos)
+#q_split = q_conv(q_embedding)
 q_merge = Merge(mode='sum')([q_conv_neg, q_conv_pos])
-q_act = Activation('relu')(q_merge)
+q_act = Activation('tanh')(q_merge)
 q_maxpool = Lambda(
 	lambda x: K.max(x, axis=1),
 	output_shape=(NB_FILTER,),
@@ -194,34 +216,58 @@ q_maxpool = Lambda(
 a_conv = Convolution1D(
 	nb_filter=NB_FILTER,
 	filter_length=FILTER_LENGTH,
-	border_mode='valid',
+	border_mode='same',
 	#activation='relu',
 	subsample_length=1,
-	input_shape=(AMAX_TIMESTAMP, WORD_EMBEDDING_DIM)
+	input_shape=(AMAX_TIMESTAMP, WORD_EMBEDDING_DIM),
+	name='a_conv'
 )
 
 a_conv_neg = a_conv(a_neg)
 a_conv_pos = a_conv(a_pos)
+#a_split = a_conv(a_embedding)
 a_merge = Merge(mode='sum')([a_conv_neg, a_conv_pos])
-a_act = Activation('relu')(a_merge)
+a_act = Activation('tanh')(a_merge)
 a_maxpool = Lambda(
 	lambda x: K.max(x, axis=1),
 	output_shape=(NB_FILTER,),
 	name='a_maxpool'
 )(a_act)
 
+print('q maxpool ', q_maxpool._keras_shape, K.ndim(q_maxpool))
+print('a maxpool ', a_maxpool._keras_shape, K.ndim(a_maxpool))
+
 similar = merge(
 	[q_maxpool, a_maxpool], 
 	mode=lambda x: compute_similar(*x),
-	output_shape=(BATCH_SIZE, 1),
+	#mode='cos', dot_axes=-1,
+	output_shape=(BATCH_SIZE,1),
 	name='similar'
 )
 
+debug1 = theano.function([q_input,a_input], a_embedding,on_unused_input='ignore')
+debug2 = theano.function([q_input,a_input], q_embedding,on_unused_input='ignore')
+print(debug1(xq_np[0:BATCH_SIZE], xa_np[0:BATCH_SIZE]).max())
+print(debug2(xq_np[0:BATCH_SIZE], xa_np[0:BATCH_SIZE]).max())
+
 model = Model(input=[q_input, a_input], output=[similar])
-model.compile(optimizer='adam', loss='mse')
-model.fit(
-	{'q_input':xq_np, 'a_input':xa_np}, 
-	{'similar':y_np},
-	batch_size=BATCH_SIZE,
-	nb_epoch=EPOCHS
+#adam = Adam(clipnorm=3)
+model.compile(
+	optimizer='adam', 
+	loss='mse', 
+	metrics=['accuracy'], 
+	#mode=NanGuardMode(nan_is_error=True, inf_is_error=True)
 )
+from keras.utils.visualize_util import plot
+plot(model, to_file='model.png')
+model.summary()
+dc = DebugCallback()
+for _ in xrange(EPOCHS):
+	model.fit(
+		{'q_input':xq_np, 'a_input':xa_np}, 
+		{'similar':y_np},
+		batch_size=BATCH_SIZE,
+		nb_epoch=1,
+		#callbacks=[dc]
+	)
+	

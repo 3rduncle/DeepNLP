@@ -36,7 +36,7 @@ def generate_neg(question, answer):
 		while True:
 			qindex = random.randint(0, qsize - 1)
 			aindex = random.randint(0, asize - 1)
-			if qindex != aindex:
+			if qindex != aindex and question[qindex] != question[aindex]:
 				break
 		neg_q.append(question[qindex])
 		neg_a.append(answer[aindex])
