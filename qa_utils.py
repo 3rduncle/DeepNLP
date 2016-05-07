@@ -42,6 +42,18 @@ def generate_neg(question, answer):
 		neg_a.append(answer[aindex])
 	return neg_q, neg_a
 
+def extract_qapair(fname):
+	questions = []
+	answers = []
+	labels = []
+	for line in open(fname):
+		line = line.rstrip('\n')
+		question, answer, label = line.split('\t')
+		questions.append(map(lambda x:x.lower(), question.split()))
+		answers.append(map(lambda x:x.lower(), answer.split()))
+		labels.append(int(label))
+	return questions, answers, labels
+
 if __name__ == '__main__':
 	a = extract_sentence('./data/qg/train.answer')
 	b = extract_sentence('./data/qg/train.question')

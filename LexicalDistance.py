@@ -12,7 +12,7 @@ from keras.layers.embeddings import Embedding
 from keras.optimizers import Adam
 from keras import backend as K
 from theano import tensor as T
-from qa_utils import extract_sentences, generate_neg
+from qa_utils import extract_qapair
 from utility import build_vocab
 import theano
 import keras
@@ -27,8 +27,8 @@ class DebugCallback(keras.callbacks.Callback):
 			print np.any(np.isnan(param))	
 
 WORD_EMBEDDING_DIM = 300 # 词向量维数
-QMAX_TIMESTAMP = 56 # Q的序列长度
-AMAX_TIMESTAMP = 1034 # A的序列长度
+QMAX_TIMESTAMP = 23 # Q的序列长度
+AMAX_TIMESTAMP = 236 # A的序列长度
 LOCAL_WINDOW = 3
 NB_FILTER = 500 # 卷积核个数
 FILTER_LENGTH = 3 # 一维卷积核窗口宽度
@@ -36,10 +36,12 @@ BATCH_SIZE = 50 # 批处理数据量
 SAFE_EPSILON = 1e-20
 EPOCHS = 1000
 
+'''
+qg数据集读取
 #pos_q = [line.split() for line in extract_sentences('./data/qg/train.question')]
 #pos_a = [line.split() for line in extract_sentences('./data/qg/train.answer')]
-pos_q = [line.split() for line in open('/Users/ganlu/Development/PyPath/DeepNLP/data/insurance_qa_python/train.question')]
-pos_a = [line.split() for line in open('/Users/ganlu/Development/PyPath/DeepNLP/data/insurance_qa_python/train.answer')]
+pos_q = [line.split() for line in open('./data/insurance_qa_python/train.question')]
+pos_a = [line.split() for line in open('./data/insurance_qa_python/train.answer')]
 
 reversed_vocab, vocab = build_vocab(pos_q + pos_a, start_with=['<PAD>'])
 print len(vocab)
@@ -51,19 +53,27 @@ print qmax_timestamp, amax_timestamp
 neg_q, neg_a = generate_neg(pos_q, pos_a)
 xq_data = pos_q + neg_q
 xa_data = pos_a + neg_a
+'''
 
+xq_data, xa_data, labels = extract_qapair('./data/wikiqa/WikiQASent-train.txt')
+qmax_timestamp = len(max(xq_data, key=lambda x:len(x)))
+amax_timestamp = len(max(xa_data, key=lambda x:len(x)))
+reversed_vocab, vocab = build_vocab(xq_data + xa_data, start_with=['<PAD>'])
+xq_data = [map(lambda x: vocab[x], terms) for terms in xq_data]
+xa_data = [map(lambda x: vocab[x], terms) for terms in xa_data]
 xq_np = sequence.pad_sequences(xq_data, maxlen = qmax_timestamp)
 xa_np = sequence.pad_sequences(xa_data, maxlen = amax_timestamp)
-print xq_np.shape, xa_np.shape
-y_np = np.array([1] * len(pos_q) + [0] * len(neg_q), dtype='int').reshape((len(pos_q) + len(neg_q),1))
+y_np = np.array(labels)
 
 idx = np.arange(xq_np.shape[0])
 np.random.shuffle(idx)
 xq_np = xq_np[idx]
 xa_np = xa_np[idx]
 y_np = y_np[idx]
-print xq_np.shape, xa_np.shape, y_np.shape
-print 'Check Input', np.any(np.isnan(xq_np)), np.any(np.isnan(xa_np)), np.any(np.isnan(y_np))
+print 'xq_np', xq_np.shape
+print 'xa_np', xa_np.shape, 
+print 'y_np', y_np.shape
+print 'y+', y_np.sum()
 
 # 注意自定义的merge_mode接收到的tensor带有额外的batch_size，
 # 即这一层接收到的tensor的ndim=(batch_size, row, col)
@@ -203,7 +213,6 @@ q_conv = Convolution1D(
 
 q_conv_neg = q_conv(q_neg)
 q_conv_pos = q_conv(q_pos)
-#q_split = q_conv(q_embedding)
 q_merge = Merge(mode='sum')([q_conv_neg, q_conv_pos])
 q_act = Activation('tanh')(q_merge)
 q_maxpool = Lambda(
@@ -225,7 +234,6 @@ a_conv = Convolution1D(
 
 a_conv_neg = a_conv(a_neg)
 a_conv_pos = a_conv(a_pos)
-#a_split = a_conv(a_embedding)
 a_merge = Merge(mode='sum')([a_conv_neg, a_conv_pos])
 a_act = Activation('tanh')(a_merge)
 a_maxpool = Lambda(
